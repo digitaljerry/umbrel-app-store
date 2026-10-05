@@ -1,0 +1,150 @@
+name: Build Paperclip image
+
+# Builds paperclipai/paperclip into ghcr.io/<owner>/paperclip and (optionally) pins
+# Paperclip Edge to it. Patches in patches/*.patch are applied on top when enabled.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "What to build: 'nightly' (newest nightly tag), a PR number, or a git ref/sha"
+        required: true
+        default: nightly
+        type: string
+      patches:
+        description: "Apply patches/*.patch on top"
+        type: boolean
+        default: true
+      pin:
+        description: "Pin homelab-paperclip to the new image and commit"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: paperclip-build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out app store
+        uses: actions/checkout@v4
+        with:
+          path: store
+
+      - name: Check out Paperclip
+        uses: actions/checkout@v4
+        with:
+          repository: paperclipai/paperclip
+          path: paperclip
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Select source
+        id: src
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          cd paperclip
+          base=$(git describe --tags --match 'v*' --abbrev=0 origin/master 2>/dev/null | sed 's/^v//')
+          base=${base:-0.0.0}
+          if [ "$SOURCE" = "nightly" ]; then
+            ver=$(git tag -l 'nightly/v*' | sed 's#^nightly/v##' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1)
+            [ -n "$ver" ] || { echo "::error::No nightly tags found"; exit 1; }
+            git checkout -q "nightly/v$ver"
+            label="nightly $ver"; slug="nightly"; version="$ver"
+          elif echo "$SOURCE" | grep -Eq '^[0-9]+$'; then
+            git fetch -q origin "pull/$SOURCE/head"
+            git checkout -q FETCH_HEAD
+            label="PR #$SOURCE"; slug="pr$SOURCE"; version="$base-pr$SOURCE"
+          else
+            git checkout -q "$SOURCE"
+            label="ref $SOURCE"; slug="ref"; version="$base-ref"
+          fi
+          sha=$(git rev-parse --short=7 HEAD)
+          case "$version" in *-*) version="$version.g$sha" ;; *) version="$version-g$sha" ;; esac
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug-$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Apply patches
+        id: patch
+        if: inputs.patches
+        run: |
+          cd paperclip
+          applied=""
+          shopt -s nullglob
+          for p in ../store/patches/*.patch; do
+            name=$(basename "$p" .patch)
+            if git apply --check "$p" 2>/dev/null; then
+              git apply "$p"; applied="$applied $name"; echo "Applied $name"
+            elif git apply --reverse --check "$p" 2>/dev/null; then
+              echo "::notice::$name is already in this source (fixed upstream?) - skipped. Consider deleting patches/$name.patch"
+            else
+              echo "::error::$name no longer applies to ${{ steps.src.outputs.label }}. Update or remove patches/$name.patch"; exit 1
+            fi
+          done
+          applied=$(echo $applied)
+          echo "applied=$applied" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          tag="${{ steps.src.outputs.slug }}"
+          version="${{ steps.src.outputs.version }}"
+          notes="${{ steps.src.outputs.label }} (commit ${{ steps.src.outputs.commit }})"
+          if [ -n "${{ steps.patch.outputs.applied }}" ]; then
+            tag="$tag-patched-r${{ github.run_number }}"
+            version="$version.patched.${{ github.run_number }}"
+            notes="$notes + patches: ${{ steps.patch.outputs.applied }}"
+          fi
+          echo "image=ghcr.io/$owner/paperclip:$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64, production target)
+        uses: docker/build-push-action@v6
+        with:
+          context: paperclip
+          target: production
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            PAPERCLIP_BUILD_VERSION=${{ steps.meta.outputs.version }}
+            PAPERCLIP_BUILD_COMMIT=${{ steps.src.outputs.commit }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Pin Paperclip Edge to this build
+        if: inputs.pin
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          NOTES: ${{ steps.meta.outputs.notes }}
+        run: |
+          cd store/homelab-paperclip
+          sed -i -E "s|^(    image: ).*|\1${IMAGE}|" docker-compose.yml
+          sed -i -E "s|^(    # Current pin = ).*|\1${NOTES}.|" docker-compose.yml
+          sed -i -E "s|^version: .*|version: \"${VERSION}\"|" umbrel-app.yml
+          sed -i -E "s|^releaseNotes: .*|releaseNotes: \"Built from ${NOTES}.\"|" umbrel-app.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Pin Paperclip Edge to ${IMAGE}"
+          git push

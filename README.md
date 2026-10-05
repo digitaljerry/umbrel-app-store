@@ -12,21 +12,20 @@ A community app store for umbrelOS.
 
 umbrelOS → App Store → ⋯ → Community App Stores → paste this repository's URL → Add.
 
-## Updating Paperclip Edge
+## Building and updating Paperclip Edge
 
-Umbrel pulls a new image only when the `image:` line changes, so the image is pinned to an immutable `sha-<commit>` tag.
+Umbrel pulls a new image only when the `image:` line changes, so Paperclip Edge is always pinned to an immutable tag.
 
-1. Pick a build from the [upstream image tags](https://github.com/paperclipai/paperclip/pkgs/container/paperclip): `nightly/v*` git tags map to `sha-<short commit>` images.
-2. Update `image:` in `homelab-paperclip/docker-compose.yml` and bump `version:` in `homelab-paperclip/umbrel-app.yml`.
-3. Push. Umbrel shows an update for Paperclip Edge.
+Actions → **Build Paperclip image** → Run workflow:
 
-Pre-release builds migrate the database forward; an instance cannot be moved back to an older build.
+| Input | Meaning |
+| --- | --- |
+| `source` | `nightly` (newest upstream nightly tag, default), an upstream PR number, or any git ref/sha |
+| `patches` | Apply everything in [`patches/`](patches/) on top (default on) |
+| `pin` | Commit the new image and version to `homelab-paperclip` so Umbrel offers the update (default on) |
 
-## Running an unreleased pull request
+The image is pushed to `ghcr.io/<owner>/paperclip` (amd64). After the first build, set the `paperclip` package's visibility to **Public** (Profile → Packages → paperclip → Package settings) so Umbrel can pull it.
 
-Actions → **Build Paperclip PR image** → Run workflow → enter the upstream PR number.
-The workflow builds `ghcr.io/<owner>/paperclip:pr-<number>-<sha>` (amd64) and, with *pin* enabled, commits the new image and version so Umbrel offers the update.
+To use an official upstream image instead, set `image:` in `homelab-paperclip/docker-compose.yml` to a `ghcr.io/paperclipai/paperclip:sha-<commit>` tag and bump `version:` in `homelab-paperclip/umbrel-app.yml`.
 
-After the first build, set the `paperclip` package's visibility to **Public** (Profile → Packages → paperclip → Package settings) so Umbrel can pull it.
-
-PR builds can contain database migrations that never land upstream; treat the instance's data as disposable when running one.
+Pre-release and PR builds migrate the database forward; an instance cannot be moved back to an older build. PR builds can contain migrations that never land upstream, so treat the instance's data as disposable when running one.

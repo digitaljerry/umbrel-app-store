@@ -1,0 +1,30 @@
+diff --git a/packages/shared/src/app-definitions/slack.json b/packages/shared/src/app-definitions/slack.json
+index 208c7aacc..acad178d9 100644
+--- a/packages/shared/src/app-definitions/slack.json
++++ b/packages/shared/src/app-definitions/slack.json
+@@ -25,8 +25,8 @@
+       "whenToUse": "Use the provider-hosted connection for the quickest setup.",
+       "defaults": {
+         "serverUrl": "https://mcp.slack.com/mcp",
+-        "authorizationEndpoint": "https://slack.com/oauth/v2/authorize",
+-        "tokenEndpoint": "https://slack.com/api/oauth.v2.access",
++        "authorizationEndpoint": "https://slack.com/oauth/v2_user/authorize",
++        "tokenEndpoint": "https://slack.com/api/oauth.v2.user.access",
+         "scopesHint": [
+           "canvases:read",
+           "canvases:write",
+diff --git a/scripts/ingest-app-definitions.mjs b/scripts/ingest-app-definitions.mjs
+index 928085347..03bc55104 100644
+--- a/scripts/ingest-app-definitions.mjs
++++ b/scripts/ingest-app-definitions.mjs
+@@ -355,8 +355,8 @@ const apps = [
+         "oauth",
+         {
+           serverUrl: "https://mcp.slack.com/mcp",
+-          authorizationEndpoint: "https://slack.com/oauth/v2/authorize",
+-          tokenEndpoint: "https://slack.com/api/oauth.v2.access",
++          authorizationEndpoint: "https://slack.com/oauth/v2_user/authorize",
++          tokenEndpoint: "https://slack.com/api/oauth.v2.user.access",
+           scopesHint: ["channels:read", "chat:write", "search:read"],
+         },
+         "S3",
