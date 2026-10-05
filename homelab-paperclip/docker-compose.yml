@@ -1,0 +1,31 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: homelab-paperclip_server_1
+      APP_PORT: 3100
+      PROXY_AUTH_ADD: "false"
+
+  server:
+    # Official upstream image. Pin to a sha-<commit> tag: Umbrel only pulls when this line changes.
+    # Channels: canary (every master merge) -> nightly (daily) -> beta -> latest (stable).
+    # Current pin = nightly 2026.1004.0-nightly.0 (commit 1c07b5903b1b11139b1e1ce052a3cd4885865d90).
+    image: ghcr.io/paperclipai/paperclip:sha-1c07b59
+    user: "1000:1000"
+    restart: on-failure
+    environment:
+      HOST: "0.0.0.0"
+      PAPERCLIP_HOME: "/paperclip"
+      PAPERCLIP_PUBLIC_URL: "http://${DEVICE_DOMAIN_NAME}:8861"
+      PAPERCLIP_API_URL: "http://127.0.0.1:3100"
+      # To reach this instance through a public hostname, override this variable in the
+      # app's Umbrel settings and append your hostname to the list.
+      PAPERCLIP_ALLOWED_HOSTNAMES: "${DEVICE_DOMAIN_NAME},${DEVICE_DOMAIN_NAME}:8861,${DEVICE_HOSTNAME},${DEVICE_HOSTNAME}:8861,${APP_DOMAIN},${APP_DOMAIN}:8861,${APP_HIDDEN_SERVICE},${APP_HOMELAB_PAPERCLIP_LOCAL_IPS},homelab-paperclip_server_1"
+      BETTER_AUTH_SECRET: "${APP_SEED}"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - ${APP_DATA_DIR}/data:/paperclip

@@ -1,0 +1,31 @@
+manifestVersion: 1
+id: homelab-paperclip
+storage:
+  dataRoot: data
+name: Paperclip Edge
+tagline: Second Paperclip instance tracking upstream pre-releases
+icon: https://getumbrel.github.io/umbrel-apps-gallery/paperclip/icon.svg
+category: ai
+# Bump this whenever you change the image pin so Umbrel offers the update.
+version: "2026.1004.0-nightly.0"
+port: 8861
+description: >-
+  A separate Paperclip instance (own database, login and data) running the
+  official ghcr.io/paperclipai/paperclip image pinned to a pre-release build.
+  Based on the official Umbrel Paperclip package, so it can run alongside it.
+developer: Paperclip Labs, Inc.
+website: https://paperclip.ing/
+submitter: Paperclip Labs, Inc.
+submission: https://github.com/paperclipai/paperclip
+repo: https://github.com/paperclipai/paperclip
+support: https://github.com/paperclipai/paperclip/issues
+gallery:
+  - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/1.webp
+  - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/2.webp
+  - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/3.webp
+releaseNotes: "Pinned to nightly 2026.1004.0-nightly.0 (commit 1c07b59)."
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+deterministicPassword: false
