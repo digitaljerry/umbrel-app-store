@@ -10,8 +10,9 @@ services:
   server:
     # Official upstream image. Pin to a sha-<commit> tag: Umbrel only pulls when this line changes.
     # Channels: canary (every master merge) -> nightly (daily) -> beta -> latest (stable).
-    # Current pin = nightly 2026.1004.0-nightly.0 (commit 1c07b5903b1b11139b1e1ce052a3cd4885865d90) + patches: slack-mcp-user-oauth.
-    image: ghcr.io/digitaljerry/paperclip:nightly-1c07b59-patched-r1
+    # Current pin = stable 2026.1005.0 (commit 467125fafb47a8520856504fecc48d6e32055db1) + patches: slack-mcp-user-oauth
+    # Build key = 467125fafb47a8520856504fecc48d6e32055db1:3ca13b7caff6
+    image: ghcr.io/digitaljerry/paperclip:stable-467125f-patched-r2
     user: "1000:1000"
     restart: on-failure
     environment:

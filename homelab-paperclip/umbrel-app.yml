@@ -7,7 +7,7 @@ tagline: Second Paperclip instance tracking upstream pre-releases
 icon: https://getumbrel.github.io/umbrel-apps-gallery/paperclip/icon.svg
 category: ai
 # Bump this whenever you change the image pin so Umbrel offers the update.
-version: "2026.1004.0-nightly.0.g1c07b59.patched.1"
+version: "2026.1005.0-g467125f.patched.2"
 port: 8861
 description: >-
   A separate Paperclip instance (own database, login and data) running the
@@ -23,7 +23,7 @@ gallery:
   - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/1.webp
   - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/2.webp
   - https://getumbrel.github.io/umbrel-apps-gallery/paperclip/3.webp
-releaseNotes: "Built from nightly 2026.1004.0-nightly.0 (commit 1c07b5903b1b11139b1e1ce052a3cd4885865d90) + patches: slack-mcp-user-oauth."
+releaseNotes: "Built from stable 2026.1005.0 (commit 467125fafb47a8520856504fecc48d6e32055db1) + patches: slack-mcp-user-oauth."
 dependencies: []
 path: ""
 defaultUsername: ""
