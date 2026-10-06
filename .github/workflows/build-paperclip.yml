@@ -1,21 +1,27 @@
 name: Build Paperclip image
 
-# Builds paperclipai/paperclip into ghcr.io/<owner>/paperclip and (optionally) pins
-# Paperclip Edge to it. Patches in patches/*.patch are applied on top when enabled.
+# Pins Paperclip Edge to a Paperclip build. Patches in patches/*.patch are applied on top
+# when enabled; if none apply (or there are none) and the source has an official image,
+# that image is pinned directly instead of building one.
+#
+# The schedule keeps Edge on the latest stable release, but only while Edge is already
+# pinned to a stable build, so a manual nightly/PR pin is never overwritten.
 on:
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       source:
-        description: "What to build: 'nightly' (newest nightly tag), a PR number, or a git ref/sha"
+        description: "'stable' (latest release), 'nightly' (newest nightly tag), a PR number, or a git ref/sha"
         required: true
-        default: nightly
+        default: stable
         type: string
       patches:
         description: "Apply patches/*.patch on top"
         type: boolean
         default: true
       pin:
-        description: "Pin homelab-paperclip to the new image and commit"
+        description: "Pin homelab-paperclip to the result and commit"
         type: boolean
         default: true
 
@@ -25,6 +31,11 @@ permissions:
 
 concurrency:
   group: paperclip-build
+
+env:
+  SOURCE: ${{ inputs.source || 'stable' }}
+  APPLY_PATCHES: ${{ github.event_name == 'schedule' || inputs.patches }}
+  PIN: ${{ github.event_name == 'schedule' || inputs.pin }}
 
 jobs:
   build:
@@ -47,16 +58,25 @@ jobs:
       - name: Select source
         id: src
         env:
-          SOURCE: ${{ inputs.source }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           cd paperclip
           base=$(git describe --tags --match 'v*' --abbrev=0 origin/master 2>/dev/null | sed 's/^v//')
           base=${base:-0.0.0}
-          if [ "$SOURCE" = "nightly" ]; then
+          upstream=""
+          if [ "$SOURCE" = "stable" ]; then
+            tag=$(gh api repos/paperclipai/paperclip/releases/latest --jq .tag_name)
+            [ -n "$tag" ] || { echo "::error::Could not resolve the latest stable release"; exit 1; }
+            git checkout -q "$tag"
+            ver="${tag#v}"
+            label="stable $ver"; slug="stable"; version="$ver"
+            upstream="ghcr.io/paperclipai/paperclip:$ver"
+          elif [ "$SOURCE" = "nightly" ]; then
             ver=$(git tag -l 'nightly/v*' | sed 's#^nightly/v##' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1)
             [ -n "$ver" ] || { echo "::error::No nightly tags found"; exit 1; }
             git checkout -q "nightly/v$ver"
             label="nightly $ver"; slug="nightly"; version="$ver"
+            upstream="ghcr.io/paperclipai/paperclip:sha-$(git rev-parse --short=7 HEAD)"
           elif echo "$SOURCE" | grep -Eq '^[0-9]+$'; then
             git fetch -q origin "pull/$SOURCE/head"
             git checkout -q FETCH_HEAD
@@ -66,57 +86,87 @@ jobs:
             label="ref $SOURCE"; slug="ref"; version="$base-ref"
           fi
           sha=$(git rev-parse --short=7 HEAD)
-          case "$version" in *-*) version="$version.g$sha" ;; *) version="$version-g$sha" ;; esac
           echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "slug=$slug-$sha" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Apply patches
         id: patch
-        if: inputs.patches
+        if: env.APPLY_PATCHES == 'true'
         run: |
           cd paperclip
-          applied=""
+          applied=""; files=""
           shopt -s nullglob
           for p in ../store/patches/*.patch; do
             name=$(basename "$p" .patch)
             if git apply --check "$p" 2>/dev/null; then
-              git apply "$p"; applied="$applied $name"; echo "Applied $name"
+              git apply "$p"; applied="$applied $name"; files="$files $p"; echo "Applied $name"
             elif git apply --reverse --check "$p" 2>/dev/null; then
-              echo "::notice::$name is already in this source (fixed upstream?) - skipped. Consider deleting patches/$name.patch"
+              echo "::notice::$name is already in ${{ steps.src.outputs.label }} (fixed upstream?) - skipped. Consider deleting patches/$name.patch"
             else
               echo "::error::$name no longer applies to ${{ steps.src.outputs.label }}. Update or remove patches/$name.patch"; exit 1
             fi
           done
-          applied=$(echo $applied)
-          echo "applied=$applied" >> "$GITHUB_OUTPUT"
+          hash=none
+          [ -n "$files" ] && hash=$(cat $files | sha256sum | cut -c1-12)
+          echo "applied=$(echo $applied)" >> "$GITHUB_OUTPUT"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve image tag
+      - name: Decide what to pin
         id: meta
         run: |
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          tag="${{ steps.src.outputs.slug }}"
+          applied="${{ steps.patch.outputs.applied }}"
           version="${{ steps.src.outputs.version }}"
           notes="${{ steps.src.outputs.label }} (commit ${{ steps.src.outputs.commit }})"
-          if [ -n "${{ steps.patch.outputs.applied }}" ]; then
-            tag="$tag-patched-r${{ github.run_number }}"
-            version="$version.patched.${{ github.run_number }}"
-            notes="$notes + patches: ${{ steps.patch.outputs.applied }}"
+          key="${{ steps.src.outputs.commit }}:${{ steps.patch.outputs.hash || 'none' }}"
+          upstream="${{ steps.src.outputs.upstream }}"
+          if [ -z "$applied" ] && [ -n "$upstream" ]; then
+            image="$upstream"; build=false
+            case "$version" in *-*) version="$version.g${{ steps.src.outputs.sha }}" ;; esac
+          else
+            image="ghcr.io/$owner/paperclip:${{ steps.src.outputs.slug }}"; build=true
+            case "$version" in *-*) version="$version.g${{ steps.src.outputs.sha }}" ;; *) version="$version-g${{ steps.src.outputs.sha }}" ;; esac
+            if [ -n "$applied" ]; then
+              image="$image-patched-r${{ github.run_number }}"
+              version="$version.patched.${{ github.run_number }}"
+              notes="$notes + patches: $applied"
+            fi
           fi
-          echo "image=ghcr.io/$owner/paperclip:$tag" >> "$GITHUB_OUTPUT"
+
+          compose=store/homelab-paperclip/docker-compose.yml
+          current_key=$(sed -n -E 's/^    # Build key = (.*)$/\1/p' "$compose")
+          current_label=$(sed -n -E 's/^    # Current pin = (.*)$/\1/p' "$compose")
+          skip=false
+          if [ "$current_key" = "$key" ]; then
+            echo "::notice::Edge is already pinned to $notes - nothing to do."; skip=true
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "${current_label#stable }" = "$current_label" ]; then
+            echo "::notice::Edge is pinned to '$current_label', not a stable build - scheduled stable tracking skipped."; skip=true
+          fi
+
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "Will pin: $image (version $version, build=$build, skip=$skip)"
 
       - uses: docker/setup-buildx-action@v3
+        if: steps.meta.outputs.skip != 'true' && steps.meta.outputs.build == 'true'
 
       - uses: docker/login-action@v3
+        if: steps.meta.outputs.skip != 'true' && steps.meta.outputs.build == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push (amd64, production target)
+        if: steps.meta.outputs.skip != 'true' && steps.meta.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: paperclip
@@ -132,16 +182,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Pin Paperclip Edge to this build
-        if: inputs.pin
+      - name: Pin Paperclip Edge
+        if: env.PIN == 'true' && steps.meta.outputs.skip != 'true'
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           VERSION: ${{ steps.meta.outputs.version }}
           NOTES: ${{ steps.meta.outputs.notes }}
+          KEY: ${{ steps.meta.outputs.key }}
         run: |
           cd store/homelab-paperclip
+          grep -q '^    # Build key = ' docker-compose.yml || sed -i -E "s|^(    # Current pin = .*)$|\1\n    # Build key = none|" docker-compose.yml
           sed -i -E "s|^(    image: ).*|\1${IMAGE}|" docker-compose.yml
-          sed -i -E "s|^(    # Current pin = ).*|\1${NOTES}.|" docker-compose.yml
+          sed -i -E "s|^(    # Current pin = ).*|\1${NOTES}|" docker-compose.yml
+          sed -i -E "s|^(    # Build key = ).*|\1${KEY}|" docker-compose.yml
           sed -i -E "s|^version: .*|version: \"${VERSION}\"|" umbrel-app.yml
           sed -i -E "s|^releaseNotes: .*|releaseNotes: \"Built from ${NOTES}.\"|" umbrel-app.yml
           git config user.name "github-actions[bot]"
